@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>強颱薔琵 逐時路徑與暴風圈</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c2430; --muted:#6b7585; --line:#d9dee6; --accent:#d9480f; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14181f; --card:#1d232d; --text:#e8ecf2; --muted:#94a0b2; --line:#2e3744; --accent:#ff8a4c; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 "Microsoft JhengHei","PingFang TC",system-ui,sans-serif; }
+  header { padding:14px 16px 6px; max-width:1180px; margin:0 auto; }
+  h1 { margin:0; font-size:20px; }
+  h2 { margin:0 0 6px; font-size:15px; }
+  .sub { color:var(--muted); font-size:13px; }
+  main { max-width:1180px; margin:0 auto; padding:8px 16px 24px; display:grid; gap:12px; grid-template-columns:1fr 330px; }
+  @media (max-width:860px) { main { grid-template-columns:1fr; } }
+  #map { height:540px; border-radius:10px; border:1px solid var(--line); }
+  @media (max-width:860px) { #map { height:400px; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .full { grid-column:1 / -1; }
+  .bigtime { font-size:26px; font-weight:700; line-height:1.2; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { padding:4px 0; border-bottom:1px solid var(--line); text-align:left; font-weight:400; }
+  td:last-child { text-align:right; font-weight:600; }
+  .warn { color:var(--accent); font-weight:700; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button, select { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:7px 12px; font-size:14px; cursor:pointer; }
+  select { background:var(--card); color:var(--text); border:1px solid var(--line); }
+  button.ghost { background:var(--card); color:var(--text); border:1px solid var(--line); }
+  /* 時間軸 */
+  .timebar { padding:12px 14px 30px; }
+  .slidewrap { position:relative; margin-top:10px; }
+  input[type=range] { width:100%; margin:0; height:28px; accent-color:var(--accent); }
+  .tick { position:absolute; top:30px; transform:translateX(-50%); font-size:11px; color:var(--muted); white-space:nowrap; }
+  .tick::before { content:""; position:absolute; left:50%; top:-6px; height:5px; border-left:1px solid var(--muted); }
+  /* 路徑情境卡 */
+  .sc { display:block; width:100%; text-align:left; background:var(--card); color:var(--text); border:2px solid var(--line); border-radius:10px; padding:9px 11px; margin-bottom:8px; }
+  .sc.on { border-color:var(--c); box-shadow:0 0 0 2px var(--c) inset; }
+  .sc .nm { font-weight:700; }
+  .sc .pb { height:8px; background:var(--line); border-radius:4px; margin:6px 0 3px; overflow:hidden; }
+  .sc .pb i { display:block; height:100%; background:var(--c); }
+  .sc .ds { font-size:12px; color:var(--muted); }
+  .stack { display:flex; height:14px; border-radius:7px; overflow:hidden; margin:4px 0 8px; }
+  .stack i { display:block; height:100%; }
+  .dot { display:inline-block; width:11px; height:11px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+  .note { font-size:13px; color:var(--muted); line-height:1.65; }
+  .note b, .note strong { color:var(--text); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:860px) { .grid2 { grid-template-columns:1fr; } }
+  .small td, .small th { font-size:13px; }
+  .small th { color:var(--muted); }
+  .small td:last-child { font-weight:400; }
+  label.chk { font-size:13px; cursor:pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>強颱薔琵（CHAMPI）逐時路徑、暴風圈與路線機率</h1>
+  <div class="sub">2026/10/19 14:00 起至 10/23 23:00，每小時一格（台灣時間）｜資料整理時間：10/19</div>
+</header>
+
+<main>
+  <!-- 左：地圖 + 時間軸 -->
+  <div>
+    <div id="map"></div>
+    <div class="card timebar" style="margin-top:12px">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <div class="bigtime" id="t"></div>
+          <div class="sub" id="lead"></div>
+        </div>
+        <div class="row">
+          <button class="ghost" id="prev" title="退 1 小時 (←)">◀ 1h</button>
+          <button id="play">▶ 播放</button>
+          <button class="ghost" id="next" title="進 1 小時 (→)">1h ▶</button>
+          <select id="speed" title="播放速度">
+            <option value="400">慢</option>
+            <option value="150" selected>中</option>
+            <option value="50">快</option>
+          </select>
+        </div>
+      </div>
+      <div class="slidewrap">
+        <input id="slider" type="range" min="0" value="0" step="1" aria-label="時間軸">
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label class="chk"><input type="checkbox" id="errChk" checked> 顯示誤差範圍（風圈 ± 誤差、路徑 70% 範圍）</label>
+      <label class="chk"><input type="checkbox" id="allChk" checked> 同時顯示其他路徑</label>
+    </div>
+  </div>
+
+  <!-- 右：路徑選擇 + 即時資料 -->
+  <div>
+    <div class="card">
+      <h2>路徑情境（點選切換）</h2>
+      <div class="stack" id="stack"></div>
+      <div id="scs"></div>
+      <div class="note" style="font-size:12px">機率為依 10/19 公開報導整理的<b>綜合估計</b>，不是官方數字，詳見下方說明。</div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>此刻（<span id="curName"></span>）</h2>
+      <table>
+        <tr><td>中心位置</td><td id="pos"></td></tr>
+        <tr><td>近中心最大風速</td><td id="wind"></td></tr>
+        <tr><td>強度分類</td><td id="cls"></td></tr>
+        <tr><td>七級風半徑</td><td id="r7"></td></tr>
+        <tr><td>十級風半徑</td><td id="r10"></td></tr>
+        <tr><td>距台灣最近陸地</td><td id="dist"></td></tr>
+        <tr><td>七級風圈觸及台灣</td><td id="hit"></td></tr>
+      </table>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>同一時間三條路徑比較</h2>
+      <table class="small" id="cmp"></table>
+      <div class="note" style="margin-top:6px" id="pHit"></div>
+    </div>
+  </div>
+
+  <!-- 暴風圈準確度 -->
+  <div class="card full">
+    <h2>暴風圈預估準不準？</h2>
+    <div class="grid2">
+      <div class="note">
+        <p><b>結論：中等偏低，越往後越不準。</b>七級風半徑（約 17.2 m/s，即國際的 34 節風圈）本來就是所有預報項目中最難的之一。</p>
+        <ul style="margin:0; padding-left:18px">
+          <li><b>歷史驗證：</b>公開的西北太平洋與全球驗證文獻中，34 節風圈的預報平均絕對誤差，約為 25–33 海浬（約 46–61 公里）（48 小時預報，2014–15 年資料），而薔琵目前的七級風半徑是 250–300 公里，所以<b>誤差約占半徑的 15–25%</b>，預報時間越長誤差越大。</li>
+          <li><b>「真值」本身就不確定：</b>遠洋沒有飛機偵察，官方「實測」風圈是靠衛星與模式估的，文獻也指出遠洋風圈的最佳路徑資料不確定性相當大。</li>
+          <li><b>不是正圓：</b>官方資料分四個象限，例如 10/18 的七級風半徑，西北 200 公里、東北 220 公里、西南 180 公里、東南 210 公里；颱風前進方向右側通常較大。頁面用平均半徑畫圓，邊緣實際可能差 ±10%。</li>
+          <li><b>強度下降不代表風圈縮小：</b>颱風接近中緯度、與東北季風交互作用時，風圈常常變大，今年的巴威颱風也有類似現象（七級風半徑擴大到 380 公里）。所以頁面假設的 300 公里，在 10/22 以後<b>有被低估的風險</b>。</li>
+        </ul>
+      </div>
+      <div class="note">
+        <p><b>頁面採用的誤差範圍（我的估算，非官方）：</b></p>
+        <table class="small" id="errTbl"></table>
+        <p style="margin-top:8px"><b>路徑誤差：</b>氣象署預報 10/24 14 時（約 5 天後）的 70% 機率半徑為 410 公里；頁面假設誤差從 30 公里隨時間線性增加到該值，畫成灰色點狀圓。</p>
+        <p><b>哪些是官方資料、哪些是假設：</b>10/19 的實測風圈與 10/20–10/21 的 300 公里來自氣象署；10/22 以後的七級風半徑、全部時段的十級風半徑變化、以及三條路徑的逐時位置，都是我依公開資料估算或內插的。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 資料來源 -->
+  <div class="card full note">
+    <b>三條路徑與機率怎麼來的</b><br>
+    ‧ <b>A 北轉不登陸（45%）：</b>氣象署（10/22 轉北北西、10/23 在宮古島附近北上）；歐洲 AI 模式（AIFS）與 Google 模式多數預測在沖繩、宮古島附近北轉；10/18 AI 系集約 45% 成員提早北轉。<br>
+    ‧ <b>B 台灣東方近海擦邊（44%）：</b>JTWC 10/23 約在 23°N、123°E，位於台灣東方近海；AI 系集約 55% 成員非常靠近或通過台灣附近，扣掉直接登陸的比例，剩下就是近海擦邊。<br>
+    ‧ <b>C 登陸花蓮附近（11%）：</b>日本氣象廳預測從花蓮一帶穿過台灣，歐洲傳統系集（IFS）成員較偏向登陸；賈新興統整 1151 條路徑，整體登陸機率約 10.9%。注意各模式差異極大（有的 74%、有的只有 6–8%），所以這個比例本身也不穩定。<br>
+    ‧ 三條路徑 10/21 23 時以前共用 PAGASA 預報點（19.7°N、128.0°E），之後分歧；逐時位置為線性內插的<b>示意值</b>，不是官方逐時預報。<br>
+    ‧ 起點資料：中央氣象署 10/19 14 時，北緯 14.3°、東經 138.4°，氣壓 910 hPa，風速 55 m/s，七級風半徑 250 km，十級風半徑 100 km。<br>
+    ‧ 來源：<a href="https://www.bnext.com.tw/article/92668/champi-typhoon-path-taiwan">數位時代</a>、<a href="https://news.ltn.com.tw/news/life/breakingnews/5610878">自由時報</a>、<a href="https://udn.com/news/story/7266/9823028">聯合新聞網</a>、<a href="https://www.cna.com.tw/news/ahel/202610190010.aspx">中央社（吳德榮）</a>、<a href="https://zoom.earth/storms/champi-2026/">Zoom Earth（JTWC）</a>、<a href="https://journals.ametsoc.org/view/journals/wefo/33/4/waf-d-17-0153_1.xml">風圈誤差文獻（Weather and Forecasting）</a>。正式警報請以<a href="https://www.cwa.gov.tw/">中央氣象署</a>為準。
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+const HOUR = 3600e3;
+const ms = (m,d,h) => Date.UTC(2026, m-1, d, h-8);          // 台灣時間 -> UTC epoch
+
+// ---- 三條路徑情境 ----
+// pts: [月,日,時,緯度,經度]   wind: [月,日,時,m/s]
+const COMMON = [[10,19,14,14.3,138.4],[10,20,14,16.4,134.2],[10,21,23,19.7,128.0]];
+const SCEN = [
+  { id:'A', name:'A 北轉不登陸', short:'北轉', prob:45, color:'#1c7ed6',
+    desc:'氣象署路徑：10/22 轉向北北西，10/23 在宮古島附近往北，不登陸台灣。',
+    pts: COMMON.concat([[10,22,14,21.4,126.9],[10,23,14,24.3,125.5],[10,23,23,25.5,125.5]]),
+    wind:[[10,19,14,55],[10,20,2,60],[10,21,18,60],[10,22,14,55],[10,23,14,48],[10,24,14,33]] },
+  { id:'B', name:'B 台灣東方近海擦邊', short:'擦邊', prob:44, color:'#f08c00',
+    desc:'沿台灣東方海面北上（JTWC 10/23 約 23°N、123°E），中心不登陸，但風圈掃過台灣東部與北部。',
+    pts: COMMON.concat([[10,22,14,21.0,125.3],[10,23,14,22.6,123.4],[10,23,23,23.5,123.0]]),
+    wind:[[10,19,14,55],[10,20,2,60],[10,21,18,60],[10,22,14,55],[10,23,14,50],[10,24,14,40]] },
+  { id:'C', name:'C 登陸花蓮附近', short:'登陸', prob:11, color:'#e03131',
+    desc:'日本氣象廳與歐洲傳統系集較偏南的路徑：10/23 傍晚前後從花蓮一帶登陸，通過台灣後強度明顯減弱。',
+    pts: COMMON.concat([[10,22,14,21.2,124.2],[10,23,14,23.2,122.3],[10,23,20,23.9,121.6],[10,23,23,24.3,121.1]]),
+    wind:[[10,19,14,55],[10,20,2,60],[10,21,18,60],[10,22,14,55],[10,23,14,50],[10,23,20,42],[10,24,14,25]] }
+];
+// 七級風半徑（km），官方只有前段，其後假設維持 300
+const R7PTS = [[10,19,14,250],[10,20,2,300],[10,23,23,300]];
+
+function interp(pts, t, vi) {
+  if (t <= pts[0].t) return pts[0].v[vi];
+  for (let i=1;i<pts.length;i++) if (t <= pts[i].t) {
+    const a=pts[i-1], b=pts[i], f=(t-a.t)/(b.t-a.t);
+    return a.v[vi] + (b.v[vi]-a.v[vi])*f;
+  }
+  return pts[pts.length-1].v[vi];
+}
+const toPts = (arr, n) => arr.map(a => ({t:ms(a[0],a[1],a[2]), v:a.slice(3,3+n)}));
+
+// 台灣沿岸參考點（粗估距離）
+const TW = [[25.0,122.0],[25.15,121.75],[25.04,121.56],[24.75,121.76],[24.6,121.87],[23.98,121.61],[23.5,121.45],[22.75,121.15],[21.9,120.85],[22.6,120.3],[24.15,120.5],[25.1,121.3]];
+function hav(a,b,c,d){const R=6371,r=Math.PI/180,dl=(c-a)*r,dn=(d-b)*r;
+  const x=Math.sin(dl/2)**2+Math.cos(a*r)*Math.cos(c*r)*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(x));}
+
+// 誤差模型（估算）
+const errR7 = h => Math.min(0.30, 0.10 + 0.20*h/72);        // 風圈相對誤差
+const errTrack = h => 30 + 380*Math.min(h,120)/120;          // 路徑 70% 範圍（km）
+
+const R7 = toPts(R7PTS,1);
+const t0 = ms(10,19,14), t1 = ms(10,23,23);
+const N = Math.round((t1-t0)/HOUR) + 1;
+
+SCEN.forEach(s => {
+  const P = toPts(s.pts,2), W = toPts(s.wind,1);
+  s.rows = [];
+  for (let i=0;i<N;i++) {
+    const t = t0 + i*HOUR, h = i;
+    const lat = interp(P,t,0), lon = interp(P,t,1), wind = interp(W,t,0);
+    s.rows.push({ t, lat, lon, wind, r7:interp(R7,t,0),
+      r10:100*Math.sqrt(wind/55), e:errR7(h), trk:errTrack(h),
+      dist:Math.min(...TW.map(p => hav(lat,lon,p[0],p[1]))) });
+  }
+});
+
+function cls(w){ return w>=51 ? '強烈颱風' : w>=33 ? '中度颱風' : w>=17.2 ? '輕度颱風' : '熱帶性低氣壓'; }
+function fmt(t){ const d=new Date(t+8*HOUR);
+  return `${d.getUTCMonth()+1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2,'0')}:00`; }
+const wd = ['日','一','二','三','四','五','六'];
+function fmtFull(t){ const d=new Date(t+8*HOUR);
+  return `${d.getUTCMonth()+1}/${d.getUTCDate()}（${wd[d.getUTCDay()]}） ${String(d.getUTCHours()).padStart(2,'0')}:00`; }
+// 觸及判斷：0=否, 1=誤差內可能, 2=是
+function hitLevel(r){ if (r.dist < r.r7) return 2; if (r.dist < r.r7*(1+r.e) + r.trk) return 1; return 0; }
+
+// ---- 地圖 ----
+const map = L.map('map').setView([21,128],5);
+// OSM 官方圖磚會封鎖本機檔案，CARTO 需要 API key，改用 Esri
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {maxZoom:10, attribution:'Tiles © Esri'}).addTo(map);
+const allLL = [];
+SCEN.forEach(s => {
+  const ll = s.rows.map(r => [r.lat,r.lon]); allLL.push(...ll);
+  s.line = L.polyline(ll, {color:s.color, weight:3, dashArray:'6 6', opacity:.6}).addTo(map);
+  s.past = L.polyline([], {color:s.color, weight:5}).addTo(map);
+  s.c7 = L.circle(ll[0], {radius:1, color:s.color, fillColor:s.color, fillOpacity:.15, weight:2}).addTo(map);
+  s.mk = L.circleMarker(ll[0], {radius:6, color:'#fff', weight:2, fillColor:s.color, fillOpacity:1}).addTo(map);
+  s.mk.bindTooltip(s.short, {permanent:true, direction:'right', offset:[8,0]});
+});
+// 選中路徑專用圖層
+const c10  = L.circle([0,0], {radius:1, color:'#e03131', fillColor:'#e03131', fillOpacity:.28, weight:2}).addTo(map);
+const e7hi = L.circle([0,0], {radius:1, color:'#f08c00', fill:false, weight:1.5, dashArray:'4 5'}).addTo(map);
+const e7lo = L.circle([0,0], {radius:1, color:'#f08c00', fill:false, weight:1.5, dashArray:'4 5'}).addTo(map);
+const eTrk = L.circle([0,0], {radius:1, color:'#6b7585', fill:false, weight:1.5, dashArray:'1 6'}).addTo(map);
+const eye = L.marker([0,0], {icon:L.divIcon({className:'', html:'<div style="font-size:28px;line-height:28px;margin:-14px 0 0 -14px">🌀</div>', iconSize:[0,0]}), zIndexOffset:1000}).addTo(map);
+L.marker([23.7,120.9], {icon:L.divIcon({className:'',html:'<b style="color:#c92a2a;text-shadow:0 0 3px #fff">台灣</b>',iconSize:[0,0]})}).addTo(map);
+map.fitBounds(L.latLngBounds(allLL).pad(0.3));
+
+// ---- 狀態與 UI ----
+const $ = id => document.getElementById(id);
+const slider = $('slider'); slider.max = N-1;
+let cur = 0, sel = 0;
+
+// 路徑卡片與機率條
+$('stack').innerHTML = SCEN.map(s => `<i style="width:${s.prob}%;background:${s.color}" title="${s.name} ${s.prob}%"></i>`).join('');
+$('scs').innerHTML = SCEN.map((s,i) => `<button class="sc" data-i="${i}" style="--c:${s.color}">
+  <div class="nm"><span class="dot" style="background:${s.color}"></span>${s.name}　<span style="float:right">${s.prob}%</span></div>
+  <div class="pb"><i style="width:${s.prob}%"></i></div>
+  <div class="ds">${s.desc}</div></button>`).join('');
+document.querySelectorAll('.sc').forEach(b => b.addEventListener('click', () => { sel = +b.dataset.i; show(cur); }));
+
+// 時間軸日期刻度
+const wrap = document.querySelector('.slidewrap');
+for (let d=20; d<=23; d++) {
+  const i = Math.round((ms(10,d,0)-t0)/HOUR);
+  const el = document.createElement('div'); el.className='tick';
+  el.style.left = (i/(N-1)*100)+'%'; el.textContent = `10/${d} 00:00`; wrap.appendChild(el);
+}
+// 誤差表
+$('errTbl').innerHTML = '<tr><th>預報時間</th><th>七級風半徑誤差</th><th>以 300 km 計</th></tr>' +
+  [0,24,48,72,96].map(h => `<tr><td>${h===0?'現在':'+'+h+' 小時'}</td><td>± ${(errR7(h)*100).toFixed(0)}%</td><td style="text-align:right">${(300*(1-errR7(h))).toFixed(0)}–${(300*(1+errR7(h))).toFixed(0)} km</td></tr>`).join('');
+
+function show(i) {
+  cur = i; slider.value = i;
+  const s = SCEN[sel], r = s.rows[i];
+  const showAll = $('allChk').checked, showErr = $('errChk').checked;
+  SCEN.forEach((q,k) => {
+    const rr = q.rows[i], on = k===sel;
+    q.mk.setLatLng([rr.lat,rr.lon]);
+    q.c7.setLatLng([rr.lat,rr.lon]).setRadius(rr.r7*1000);
+    q.past.setLatLngs(q.rows.slice(0,i+1).map(x => [x.lat,x.lon]));
+    const vis = on || showAll;
+    [q.line,q.past,q.c7,q.mk].forEach(l => { if (vis) l.addTo(map); else map.removeLayer(l); });
+    q.line.setStyle({opacity: on?.9:.35, weight: on?3:2});
+    q.past.setStyle({weight: on?5:2, opacity: on?1:.5});
+    q.c7.setStyle({fillOpacity: on?.2:.05, weight: on?2:1, opacity: on?1:.5});
+    if (on) q.mk.setStyle({radius:0, opacity:0, fillOpacity:0}); else q.mk.setStyle({radius:5, opacity:1, fillOpacity:1});
+  });
+  const ll = [r.lat,r.lon];
+  eye.setLatLng(ll);
+  c10.setLatLng(ll).setRadius(r.r10*1000);
+  [[e7hi,1+r.e],[e7lo,1-r.e]].forEach(([c,f]) => { c.setLatLng(ll).setRadius(r.r7*f*1000); showErr ? c.addTo(map) : map.removeLayer(c); });
+  eTrk.setLatLng(ll).setRadius(r.trk*1000); showErr ? eTrk.addTo(map) : map.removeLayer(eTrk);
+
+  $('t').textContent = fmtFull(r.t);
+  $('lead').textContent = i===0 ? '起點：氣象署 10/19 14 時實測' : `起點後第 ${i} 小時（預估）　距 10/23 23:00 還有 ${N-1-i} 小時`;
+  $('curName').textContent = s.name;
+  $('pos').textContent = `${r.lat.toFixed(1)}°N, ${r.lon.toFixed(1)}°E`;
+  $('wind').textContent = `${r.wind.toFixed(0)} m/s`;
+  $('cls').textContent = cls(r.wind);
+  $('r7').textContent = `${r.r7.toFixed(0)} km（${(r.r7*(1-r.e)).toFixed(0)}–${(r.r7*(1+r.e)).toFixed(0)}）`;
+  $('r10').textContent = `${r.r10.toFixed(0)} km`;
+  $('dist').textContent = `約 ${r.dist.toFixed(0)} km`;
+  const hl = hitLevel(r);
+  $('hit').textContent = ['否','誤差內可能','是'][hl];
+  $('hit').className = hl ? 'warn' : '';
+  document.querySelectorAll('.sc').forEach((b,k) => b.classList.toggle('on', k===sel));
+
+  // 三路徑同時比較
+  let p2 = 0, p1 = 0;
+  $('cmp').innerHTML = '<tr><th>路徑</th><th>位置</th><th>距台</th><th style="text-align:right">七級風觸及</th></tr>' +
+    SCEN.map(q => { const rr = q.rows[i], h = hitLevel(rr);
+      if (h===2) p2 += q.prob; if (h>=1) p1 += q.prob;
+      return `<tr><td><span class="dot" style="background:${q.color}"></span>${q.short} ${q.prob}%</td><td>${rr.lat.toFixed(1)}N ${rr.lon.toFixed(1)}E</td><td>${rr.dist.toFixed(0)} km</td><td style="text-align:right">${['否','可能','是'][h]}</td></tr>`; }).join('');
+  $('pHit').innerHTML = `此刻依機率加權：七級風圈<b>確定觸及</b>台灣的機率約 <b>${p2}%</b>；<b>含誤差範圍</b>可能觸及約 <b>${p1}%</b>。`;
+}
+
+slider.addEventListener('input', () => show(+slider.value));
+$('prev').addEventListener('click', () => show(Math.max(0, cur-1)));
+$('next').addEventListener('click', () => show(Math.min(N-1, cur+1)));
+$('errChk').addEventListener('change', () => show(cur));
+$('allChk').addEventListener('change', () => show(cur));
+document.addEventListener('keydown', e => {
+  if (e.key==='ArrowLeft') { show(Math.max(0,cur-1)); }
+  else if (e.key==='ArrowRight') { show(Math.min(N-1,cur+1)); }
+});
+let timer = null;
+function stop(){ if (timer) { clearInterval(timer); timer=null; } $('play').textContent='▶ 播放'; }
+function start(){
+  if (cur >= N-1) show(0);
+  $('play').textContent='⏸ 暫停';
+  timer = setInterval(() => { if (cur >= N-1) return stop(); show(cur+1); }, +$('speed').value);
+}
+$('play').addEventListener('click', () => timer ? stop() : start());
+$('speed').addEventListener('change', () => { if (timer) { stop(); start(); } });
+show(0);
+</script>
+</body>
+</html>
